@@ -401,6 +401,10 @@ XMLEOF
                     echo "Smoke test FAILED - application did not respond with 200"
                     exit 1
                 """
+                sh """
+                    echo "=== Smoke Tests Completed ==="
+                    docker rm ${IMAGE_NAME}-staging || true
+                """
             }
         }
 
