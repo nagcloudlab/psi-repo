@@ -38,5 +38,19 @@ pipeline {
                 }
             }
         }
+        // ═══════════════════════════════════════════
+        // STAGE 3: Build Both Services
+        // ═══════════════════════════════════════════
+        stage('Build') {
+            parallel {
+                stage('Build todos-service') {
+                    steps {
+                        dir('todos-service') {
+                            sh 'mvn clean compile -B'
+                        }
+                    }
+                }
+            }
+        }
     }
 }
