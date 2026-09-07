@@ -29,11 +29,11 @@
 	<distributionManagement>
 		<repository>
 			<id>nexus-releases</id>
-			<url>http://localhost:8081/repository/psi-maven/</url>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
 		</repository>
 		<snapshotRepository>
-			<id>nexus-snapshots</id>
-			<url>http://localhost:8081/repository/psi-maven/</url>
+			<id>nexus-releases</id>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
 		</snapshotRepository>
 	</distributionManagement>
 	<properties>
