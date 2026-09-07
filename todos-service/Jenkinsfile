@@ -164,7 +164,7 @@ pipeline {
 EOF
                             mvn deploy \
                                 -DskipTests \
-                                -DaltDeploymentRepository=nexus-releases::default::http://localhost:8081/repository/psi-maven/ \
+                                -DaltDeploymentRepository=nexus-releases::default::http://localhost:8081/repository/maven-snapshots/ \
                                 -s /tmp/nexus-settings.xml -B
                             rm -f /tmp/nexus-settings.xml
                         '''
