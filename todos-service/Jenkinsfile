@@ -42,7 +42,7 @@ pipeline {
         // ═══════════════════════════════════════════════════════════
         stage('Checkout') {
             steps {
-                checkout scm
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']], userRemoteConfigs: [[url: 'http://github.com/nagcloudlab/psi-repo']]])
                 sh 'echo "Branch: ${GIT_BRANCH} | Commit: ${GIT_COMMIT}"'
             }
         }
