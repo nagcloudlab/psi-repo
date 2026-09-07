@@ -298,7 +298,7 @@ pipeline {
         //       traceability and rollback capability.
         // ═══════════════════════════════════════════════════════════
         stage('Publish JAR to Nexus') {
-            when { branch 'main' }
+            when { branch pattern: '.*main', comparator: 'REGEXP' }
             steps {
                 dir('todos-service') {
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
@@ -333,7 +333,7 @@ XMLEOF
         //       deployments always pull from a trusted source.
         // ═══════════════════════════════════════════════════════════
         stage('Push Docker Image to Nexus') {
-            when { branch 'main' }
+            when { branch pattern: '.*main', comparator: 'REGEXP' }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
                     sh """
