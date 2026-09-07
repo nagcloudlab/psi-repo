@@ -67,6 +67,60 @@ Under **Manage Jenkins → System**:
 | **SonarQube** | `8085` | SAST — static code analysis |
 | **Nexus (Web/Maven)** | `8081` | Artifact repository (JAR) |
 | **Nexus (Docker)** | `8083` | Docker image registry |
+| **MailHog (SMTP)** | `1025` | Mail server (SMTP) |
+| **MailHog (Web UI)** | `8025` | Mail inbox viewer |
+
+---
+
+## Mail Server Setup (MailHog)
+
+MailHog is a lightweight email testing tool — it catches all outgoing emails so you can view them in a web UI. No real emails are sent.
+
+### 1. Run MailHog Container
+
+```bash
+docker run -d --name mailhog \
+    -p 1025:1025 \
+    -p 8025:8025 \
+    mailhog/mailhog
+```
+
+- **SMTP**: `localhost:1025` (Jenkins sends emails here)
+- **Web UI**: `http://localhost:8025` (view received emails in browser)
+
+### 2. Configure Jenkins Email
+
+Go to **Manage Jenkins → System**:
+
+#### Extended E-mail Notification (Email Extension Plugin)
+
+| Setting | Value |
+|---------|-------|
+| SMTP server | `localhost` |
+| SMTP port | `1025` |
+| Default Content Type | `text/html` |
+| Default Recipients | `devops@example.com` |
+| Default Subject | `$PROJECT_NAME - Build #$BUILD_NUMBER - $BUILD_STATUS` |
+
+> Leave **Use SSL** and **Use TLS** unchecked. No authentication needed for MailHog.
+
+#### E-mail Notification (built-in)
+
+| Setting | Value |
+|---------|-------|
+| SMTP server | `localhost` |
+| SMTP port | `1025` |
+| Test e-mail recipient | `test@example.com` |
+
+Click **Test configuration** — you should see the test email appear in MailHog at `http://localhost:8025`.
+
+### 3. Verify
+
+1. Open `http://localhost:8025` in your browser
+2. Trigger a Jenkins build that fails
+3. Check MailHog inbox — you should see the failure notification email
+
+> **Tip**: MailHog captures ALL emails regardless of recipient address. Use any `@example.com` address.
 
 ---
 
