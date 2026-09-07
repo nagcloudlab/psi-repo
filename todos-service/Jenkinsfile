@@ -403,7 +403,7 @@ XMLEOF
                 """
                 sh """
                     echo "=== Smoke Tests Completed ==="
-                    docker rm ${IMAGE_NAME}-staging || true
+                    docker rm -f ${IMAGE_NAME}-staging || true
                 """
             }
         }
