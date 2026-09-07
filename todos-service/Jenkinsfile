@@ -298,7 +298,7 @@ pipeline {
         //       traceability and rollback capability.
         // ═══════════════════════════════════════════════════════════
         stage('Publish JAR to Nexus') {
-            when { branch pattern: '.*main', comparator: 'REGEXP' }
+            // when { branch pattern: '.*main', comparator: 'REGEXP' }
             steps {
                 dir('todos-service') {
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
@@ -353,12 +353,12 @@ XMLEOF
         //       are published — no manual intervention needed.
         // ═══════════════════════════════════════════════════════════
         stage('Deploy to Staging') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
-                }
-            }
+            // when {
+            //     allOf {
+            //         branch 'main'
+            //         expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
+            //     }
+            // }
             steps {
                 sh """
                     echo "=== Deploying to STAGING ==="
@@ -380,12 +380,12 @@ XMLEOF
         //       catches deployment failures before users do.
         // ═══════════════════════════════════════════════════════════
         stage('Smoke Tests') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
-                }
-            }
+            // when {
+            //     allOf {
+            //         branch 'main'
+            //         expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
+            //     }
+            // }
             steps {
                 sh """
                     echo "=== Running Smoke Tests against Staging ==="
@@ -412,12 +412,12 @@ XMLEOF
         //       blocking the build queue forever.
         // ═══════════════════════════════════════════════════════════
         stage('Approval for Production') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { params.DEPLOY_ENV == 'production' }
-                }
-            }
+            // when {
+            //     allOf {
+            //         branch 'main'
+            //         expression { params.DEPLOY_ENV == 'production' }
+            //     }
+            // }
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: "Deploy ${IMAGE_NAME}:${IMAGE_TAG} to PRODUCTION?",
@@ -434,12 +434,12 @@ XMLEOF
         //       approves. This is the safest path to production.
         // ═══════════════════════════════════════════════════════════
         stage('Deploy to Production') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { params.DEPLOY_ENV == 'production' }
-                }
-            }
+            // when {
+            //     allOf {
+            //         branch 'main'
+            //         expression { params.DEPLOY_ENV == 'production' }
+            //     }
+            // }
             steps {
                 sh """
                     echo "=== Deploying to PRODUCTION ==="
@@ -466,12 +466,12 @@ XMLEOF
         //       the last successful image tag.
         // ═══════════════════════════════════════════════════════════
         stage('Rollback') {
-            when {
-                allOf {
-                    branch 'main'
-                    expression { params.DEPLOY_ENV == 'production' }
-                }
-            }
+            // when {
+            //     allOf {
+            //         branch 'main'
+            //         expression { params.DEPLOY_ENV == 'production' }
+            //     }
+            // }
             steps {
                 sh """
                     echo "=== Rollback Plan ==="
