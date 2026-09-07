@@ -134,7 +134,7 @@ pipeline {
                     steps {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                         dir('todos-service') {
-                            sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=/opt/dependency-check-data -B'
+                            sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=${WORKSPACE}/.dependency-check-data -B'
                         }
                         }
                     }
