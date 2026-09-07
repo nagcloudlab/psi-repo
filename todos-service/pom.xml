@@ -26,6 +26,16 @@
 		<tag/>
 		<url/>
 	</scm>
+	<distributionManagement>
+		<repository>
+			<id>nexus-releases</id>
+			<url>http://localhost:8081/repository/maven-releases/</url>
+		</repository>
+		<snapshotRepository>
+			<id>nexus-snapshots</id>
+			<url>http://localhost:8081/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
 	<properties>
 		<java.version>17</java.version>
 		<sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>

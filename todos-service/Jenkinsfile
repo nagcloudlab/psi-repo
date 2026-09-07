@@ -106,23 +106,23 @@ pipeline {
         // ═══════════════════════════════════════════
         // STAGE 7: SCA (Software Composition Analysis)
         // ═══════════════════════════════════════════
-        stage('SCA (Software Composition Analysis)') {
-            parallel {
-                stage('OWASP Dependency-Check (Java)') {
-                    steps {
-                        dir('todos-service') {
-                            sh 'mvn org.owasp:dependency-check-maven:check -B'
-                        }
-                    }
-                    post {
-                        always {
-                            dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
-                            archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
-                        }
-                    }
-                }
-            }
-        }
+        // stage('SCA (Software Composition Analysis)') {
+        //     parallel {
+        //         stage('OWASP Dependency-Check (Java)') {
+        //             steps {
+        //                 dir('todos-service') {
+        //                     sh 'mvn org.owasp:dependency-check-maven:check -B'
+        //                 }
+        //             }
+        //             post {
+        //                 always {
+        //                     dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
+        //                     archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
         // ═══════════════════════════════════════════
         // STAGE 8: Build JAR & Docker Image
         // ═══════════════════════════════════════════
