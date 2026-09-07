@@ -18,6 +18,11 @@ pipeline {
         booleanParam(name: 'SKIP_SECURITY_SCANS', defaultValue: false, description: 'Skip all security scans')
     }
 
+    // tools {
+    //     maven 'Maven-3'    // Uncomment if Maven is configured in Jenkins Global Tool Config
+    //     jdk 'JDK-17'       // Uncomment if JDK is configured in Jenkins Global Tool Config
+    // }
+
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
@@ -51,6 +56,7 @@ pipeline {
         stage('Secrets Detection') {
             when { expression { !params.SKIP_SECURITY_SCANS } }
             steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                 sh '''
                     echo "=== Running Gitleaks ==="
                     mkdir -p reports
@@ -62,6 +68,7 @@ pipeline {
                         --report-format json \
                         --verbose
                 '''
+                }
             }
             post {
                 always {
@@ -104,6 +111,7 @@ pipeline {
             parallel {
                 stage('SAST - SonarQube') {
                     steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                         dir('todos-service') {
                             withSonarQubeEnv('SonarQube') {
                                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
@@ -118,12 +126,15 @@ pipeline {
                                 }
                             }
                         }
+                        }
                     }
                 }
                 stage('SCA - OWASP Dependency-Check') {
                     steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                         dir('todos-service') {
                             sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=/opt/dependency-check-data -B'
+                        }
                         }
                     }
                     post {
@@ -160,7 +171,7 @@ pipeline {
             steps {
                 dir('todos-service') {
                     sh 'mvn package -DskipTests -B'
-                    sh "docker build --no-cache -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
                 }
             }
         }
@@ -441,11 +452,45 @@ XMLEOF
                         ${IMAGE_NAME}:${IMAGE_TAG}
                     echo "Production deployment complete on port ${PRODUCTION_PORT}"
                 """
+                sh """
+                    git tag -a "v${IMAGE_TAG}" -m "Production release v${IMAGE_TAG}"
+                    git push origin "v${IMAGE_TAG}"
+                """
             }
         }
 
         // ═══════════════════════════════════════════════════════════
-        // STAGE 16: Build Summary Dashboard
+        // STAGE 16: Rollback (Placeholder)
+        // WHY: If production deploy goes wrong, roll back to the
+        //       previous known-good version. This is a placeholder
+        //       showing the pattern — in real pipelines you'd track
+        //       the last successful image tag.
+        // ═══════════════════════════════════════════════════════════
+        stage('Rollback') {
+            when {
+                allOf {
+                    branch 'main'
+                    expression { params.DEPLOY_ENV == 'production' }
+                }
+            }
+            steps {
+                sh """
+                    echo "=== Rollback Plan ==="
+                    echo "If production deploy fails, run:"
+                    echo "  docker stop ${IMAGE_NAME}-prod"
+                    echo "  docker rm ${IMAGE_NAME}-prod"
+                    echo "  docker run -d --name ${IMAGE_NAME}-prod -p ${PRODUCTION_PORT}:8080 ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:<PREVIOUS_TAG>"
+                    echo ""
+                    echo "Previous successful tags:"
+                    echo "  git tag -l 'v*' --sort=-version:refname | head -5"
+                    echo ""
+                    echo "To rollback via Jenkins: re-run a previous green build."
+                """
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STAGE 17: Build Summary Dashboard
         // WHY: A single view of everything that happened in this
         //       build. Makes it easy to review results without
         //       scrolling through hundreds of lines of logs.
