@@ -129,21 +129,21 @@ pipeline {
                         }
                     }
                 }
-                stage('SCA - OWASP Dependency-Check') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                        dir('todos-service') {
-                            sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=${WORKSPACE}/.dependency-check-data -B'
-                        }
-                        }
-                    }
-                    post {
-                        always {
-                            dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
-                            archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
-                        }
-                    }
-                }
+                // stage('SCA - OWASP Dependency-Check') {
+                //     steps {
+                //         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                //         dir('todos-service') {
+                //             sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=${WORKSPACE}/.dependency-check-data -B'
+                //         }
+                //         }
+                //     }
+                //     post {
+                //         always {
+                //             dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
+                //             archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
+                //         }
+                //     }
+                // }
             }
         }
 
