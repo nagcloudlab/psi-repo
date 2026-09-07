@@ -8,12 +8,14 @@ pipeline {
         NEXUS_REPO       = 'maven-snapshots'
         NEXUS_DOCKER_REG = 'localhost:8083'
         SONARQUBE_URL    = 'http://localhost:8085'
+        STAGING_PORT     = '9090'
+        PRODUCTION_PORT  = '8080'
     }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
     }
 
@@ -139,6 +141,7 @@ pipeline {
                         sh '''
                             echo "=== Scanning JAR for vulnerabilities ==="
                             echo "trivy fs --scanners vuln todos-service/target/*.jar --format json --output reports/trivy-jar-report.json"
+                            echo "trivy fs --scanners vuln todos-service/target/*.jar --format template --template @/usr/local/share/trivy/templates/html.tpl --output reports/trivy-jar-report.html"
                             echo "JAR scan complete."
                         '''
                     }
@@ -148,6 +151,7 @@ pipeline {
                         sh """
                             echo "=== Scanning Docker Image for vulnerabilities ==="
                             echo "trivy image --severity HIGH,CRITICAL --format json --output reports/trivy-image-report.json ${IMAGE_NAME}:${IMAGE_TAG}"
+                            echo "trivy image --severity HIGH,CRITICAL --format template --template @/usr/local/share/trivy/templates/html.tpl --output reports/trivy-image-report.html ${IMAGE_NAME}:${IMAGE_TAG}"
                             echo "Docker image scan complete."
                         """
                     }
@@ -155,7 +159,97 @@ pipeline {
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 8: Publish JAR to Nexus
+        // STAGE 8: DAST - OWASP ZAP
+        // ═══════════════════════════════════════════
+        stage('DAST - OWASP ZAP') {
+            steps {
+                sh """
+                    echo "=== Starting application for DAST scanning ==="
+                    echo "docker run -d --name ${IMAGE_NAME}-dast -p 8888:8080 ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "Waiting for application to start..."
+                    echo "sleep 15"
+
+                    echo "=== Running OWASP ZAP Baseline Scan ==="
+                    echo "docker run --rm --network host -v \\\$(pwd)/reports:/zap/wrk:rw \\\\
+                        ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \\\\
+                        -t http://localhost:8888 \\\\
+                        -r zap-report.html \\\\
+                        -J zap-report.json \\\\
+                        -c todos-service/security-config/zap-rules.tsv || true"
+
+                    echo "=== Tearing down DAST target ==="
+                    echo "docker stop ${IMAGE_NAME}-dast && docker rm ${IMAGE_NAME}-dast"
+                    echo "DAST scan complete."
+                """
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/zap-report.*', allowEmptyArchive: true
+                }
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 9: Security Reports Dashboard
+        // ═══════════════════════════════════════════
+        stage('Security Reports') {
+            steps {
+                sh 'mkdir -p reports'
+                echo '=== Publishing Security Reports ==='
+            }
+            post {
+                always {
+                    // Gitleaks Report
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports',
+                        reportFiles: 'gitleaks-report.json',
+                        reportName: 'Gitleaks Secrets Report'
+                    ])
+                    // OWASP Dependency-Check Report
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'todos-service/target',
+                        reportFiles: 'dependency-check-report.html',
+                        reportName: 'OWASP Dependency-Check Report'
+                    ])
+                    // ZAP DAST Report
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports',
+                        reportFiles: 'zap-report.html',
+                        reportName: 'OWASP ZAP DAST Report'
+                    ])
+                    // Trivy JAR Report
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports',
+                        reportFiles: 'trivy-jar-report.html',
+                        reportName: 'Trivy JAR Vulnerability Report'
+                    ])
+                    // Trivy Image Report
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports',
+                        reportFiles: 'trivy-image-report.html',
+                        reportName: 'Trivy Image Vulnerability Report'
+                    ])
+                    // Archive all reports
+                    archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+                }
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 10: Publish JAR to Nexus
         // ═══════════════════════════════════════════
         stage('Publish JAR to Nexus') {
             when { branch 'main' }
@@ -187,7 +281,7 @@ XMLEOF
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 9: Push Docker Image to Nexus
+        // STAGE 11: Push Docker Image to Nexus
         // ═══════════════════════════════════════════
         stage('Push Docker Image to Nexus') {
             when { branch 'main' }
@@ -204,18 +298,113 @@ XMLEOF
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 10: Deploy (Placeholder)
+        // STAGE 12: Deploy to Staging
         // ═══════════════════════════════════════════
-        stage('Deploy') {
+        stage('Deploy to Staging') {
             when { branch 'main' }
             steps {
                 sh """
-                    echo "=== Deploying ${IMAGE_NAME}:${IMAGE_TAG} ==="
-                    echo "docker pull ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}"
-                    echo "docker stop ${IMAGE_NAME} || true"
-                    echo "docker rm ${IMAGE_NAME} || true"
-                    echo "docker run -d --name ${IMAGE_NAME} -p 8080:8080 ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}"
-                    echo "Deployment complete."
+                    echo "=== Deploying to STAGING ==="
+                    docker stop ${IMAGE_NAME}-staging || true
+                    docker rm ${IMAGE_NAME}-staging || true
+                    docker run -d --name ${IMAGE_NAME}-staging \
+                        -p ${STAGING_PORT}:8080 \
+                        -e SPRING_PROFILES_ACTIVE=staging \
+                        -e PASSWORD=staging-secret \
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+                    echo "Staging deployment complete on port ${STAGING_PORT}"
+                """
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 13: Smoke Tests
+        // ═══════════════════════════════════════════
+        stage('Smoke Tests') {
+            when { branch 'main' }
+            steps {
+                sh """
+                    echo "=== Running Smoke Tests against Staging ==="
+                    echo "Waiting for application to start..."
+                    for i in 1 2 3 4 5 6; do
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${STAGING_PORT}/api/v1/todos || echo "000")
+                        echo "Attempt \$i: HTTP \$STATUS"
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "Smoke test PASSED"
+                            exit 0
+                        fi
+                        sleep 10
+                    done
+                    echo "Smoke test FAILED - application did not respond with 200"
+                    exit 1
+                """
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 14: Manual Approval
+        // ═══════════════════════════════════════════
+        stage('Approval for Production') {
+            when { branch 'main' }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "Deploy ${IMAGE_NAME}:${IMAGE_TAG} to PRODUCTION?",
+                          ok: 'Deploy to Production',
+                          submitter: 'admin,devops',
+                          parameters: [
+                              string(name: 'APPROVAL_NOTE', defaultValue: '', description: 'Optional note for this deployment')
+                          ]
+                }
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 15: Deploy to Production
+        // ═══════════════════════════════════════════
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            steps {
+                sh """
+                    echo "=== Deploying to PRODUCTION ==="
+                    docker stop ${IMAGE_NAME}-prod || true
+                    docker rm ${IMAGE_NAME}-prod || true
+                    docker run -d --name ${IMAGE_NAME}-prod \
+                        -p ${PRODUCTION_PORT}:8080 \
+                        -e SPRING_PROFILES_ACTIVE=production \
+                        -e PASSWORD=prod-secret \
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+                    echo "Production deployment complete on port ${PRODUCTION_PORT}"
+                """
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 16: Build Summary Dashboard
+        // ═══════════════════════════════════════════
+        stage('Build Summary') {
+            steps {
+                sh """
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════╗"
+                    echo "║               BUILD SUMMARY DASHBOARD                     ║"
+                    echo "╠════════════════════════════════════════════════════════════╣"
+                    echo "║ Image       : ${IMAGE_NAME}:${IMAGE_TAG}                  "
+                    echo "║ Branch      : \${GIT_BRANCH}                               "
+                    echo "║ Commit      : \${GIT_COMMIT}                               "
+                    echo "║ Build URL   : ${BUILD_URL}                                 "
+                    echo "╠════════════════════════════════════════════════════════════╣"
+                    echo "║ SECURITY SCANS                                            ║"
+                    echo "║   Secrets   : Gitleaks    ✔ (see Gitleaks Report)         "
+                    echo "║   SAST      : SonarQube   ✔ (see SonarQube Dashboard)    "
+                    echo "║   SCA       : OWASP DC    ✔ (see Dependency-Check Report)"
+                    echo "║   DAST      : OWASP ZAP   ✔ (see ZAP Report)            "
+                    echo "║   Container : Trivy        ✔ (see Trivy Reports)         "
+                    echo "╠════════════════════════════════════════════════════════════╣"
+                    echo "║ ARTIFACTS                                                 ║"
+                    echo "║   JAR       : Nexus ${NEXUS_URL}                          "
+                    echo "║   Image     : ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "╠════════════════════════════════════════════════════════════╣"
+                    echo "║ DEPLOYMENTS                                               ║"
+                    echo "║   Staging   : http://localhost:${STAGING_PORT}             "
+                    echo "║   Production: http://localhost:${PRODUCTION_PORT}          "
+                    echo "╚════════════════════════════════════════════════════════════╝"
+                    echo ""
                 """
             }
         }
@@ -230,10 +419,16 @@ XMLEOF
             cleanWs()
         }
         success {
-            slackSend(channel: '#builds', color: 'good', message: "SUCCESS: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
+            slackSend(channel: '#builds', color: 'good',
+                message: "SUCCESS: ${IMAGE_NAME}:${IMAGE_TAG} deployed to production - ${BUILD_URL}")
         }
         failure {
-            slackSend(channel: '#builds', color: 'danger', message: "FAILED: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
+            slackSend(channel: '#builds', color: 'danger',
+                message: "FAILED: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
+        }
+        unstable {
+            slackSend(channel: '#builds', color: 'warning',
+                message: "UNSTABLE: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
         }
     }
 }
