@@ -83,8 +83,8 @@ pipeline {
                             mvn sonar:sonar \
                                 -Dsonar.projectKey=todos-service \
                                 -Dsonar.projectName=todos-service \
-                                -Dsonar.host.url=http://localhost:9000 \
-                                -Dsonar.token=${SONAR_TOKEN} \
+                                -Dsonar.host.url=http://localhost:8085 \
+                                -Dsonar.login=${SONAR_TOKEN} \
                                 -B
                         '''
                     }
