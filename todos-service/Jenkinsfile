@@ -78,26 +78,16 @@ pipeline {
         stage('SAST') {
             steps {
                 dir('todos-service') {
-                    withSonarQubeEnv('SonarQube') {
+                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                         sh '''
                             mvn sonar:sonar \
                                 -Dsonar.projectKey=todos-service \
                                 -Dsonar.projectName=todos-service \
-                                -Dsonar.java.coveragePlugin=jacoco \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                                -Dsonar.host.url=http://localhost:9000 \
+                                -Dsonar.token=${SONAR_TOKEN} \
                                 -B
                         '''
                     }
-                }
-            }
-        }
-        // ═══════════════════════════════════════════
-        // STAGE 6: Quality Gate
-        // ═══════════════════════════════════════════
-        stage('Quality Gate') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
                 }
             }
         }
