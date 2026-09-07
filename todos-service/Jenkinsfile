@@ -59,13 +59,12 @@ pipeline {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                 sh '''
                     echo "=== Running Gitleaks ==="
-                    mkdir -m 777 -p reports
-                    chmod 777 reports
-                    docker run --rm -v $(pwd):/repo -v $(pwd)/reports:/repo/reports \
+                    sudo rm -rf reports || true
+                    mkdir -p reports
+                    docker run --rm -v $(pwd):/repo \
                         zricethezav/gitleaks:v8.18.0 \
                         detect --source /repo \
                         --config /repo/todos-service/security-config/gitleaks.toml \
-                        --report-path /repo/reports/gitleaks-report.json \
                         --report-format json \
                         --verbose
                 '''
