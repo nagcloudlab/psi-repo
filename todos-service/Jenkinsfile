@@ -39,7 +39,7 @@ pipeline {
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 3: Build Both Services
+        // STAGE 3: Build the Service
         // ═══════════════════════════════════════════
         stage('Build') {
             parallel {
@@ -47,6 +47,26 @@ pipeline {
                     steps {
                         dir('todos-service') {
                             sh 'mvn clean compile -B'
+                        }
+                    }
+                }
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 4: Unit Tests
+        // ═══════════════════════════════════════════
+        stage('Unit Tests') {
+            parallel {
+                stage('Test todos-service') {
+                    steps {
+                        dir('todos-service') {
+                            sh 'mvn test -B'
+                        }
+                    }
+                    post {
+                        always {
+                            junit 'todos-service/target/surefire-reports/*.xml'
+                            jacoco(execPattern: 'todos-service/target/jacoco.exec')
                         }
                     }
                 }
