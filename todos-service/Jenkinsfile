@@ -78,15 +78,17 @@ pipeline {
         stage('SAST') {
             steps {
                 dir('todos-service') {
-                    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                        sh '''
-                            mvn sonar:sonar \
-                                -Dsonar.projectKey=todos-service \
-                                -Dsonar.projectName=todos-service \
-                                -Dsonar.host.url=http://localhost:8085 \
-                                -Dsonar.login=${SONAR_TOKEN} \
-                                -B
-                        '''
+                    withSonarQubeEnv('SonarQube') {
+                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                            sh '''
+                                mvn sonar:sonar \
+                                    -Dsonar.projectKey=todos-service \
+                                    -Dsonar.projectName=todos-service \
+                                    -Dsonar.host.url=http://localhost:8085 \
+                                    -Dsonar.login=${SONAR_TOKEN} \
+                                    -B
+                            '''
+                        }
                     }
                 }
             }
