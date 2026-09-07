@@ -60,7 +60,7 @@ pipeline {
                 sh '''
                     echo "=== Running Gitleaks ==="
                     mkdir -p reports && chmod 777 reports
-                    docker run --rm -v $(pwd):/repo \
+                    docker run --rm -v $(pwd):/repo -u $(id -u):$(id -g) \
                         zricethezav/gitleaks:v8.18.0 \
                         detect --source /repo \
                         --config /repo/todos-service/security-config/gitleaks.toml \
