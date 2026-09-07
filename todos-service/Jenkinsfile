@@ -1,9 +1,29 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME       = 'todos-service'
+        IMAGE_TAG        = "${BUILD_NUMBER}"
+        NEXUS_URL        = 'http://localhost:8081'
+        NEXUS_REPO       = 'maven-snapshots'
+        NEXUS_DOCKER_REG = 'localhost:8083'
+        SONARQUBE_URL    = 'http://localhost:8085'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+
+    triggers {
+        pollSCM('H/5 * * * *')
+    }
+
     stages {
         // ═══════════════════════════════════════════
-        // STAGE 1: Checkout & Pre-flight
+        // STAGE 1: Checkout
         // ═══════════════════════════════════════════
         stage('Checkout') {
             steps {
@@ -12,89 +32,84 @@ pipeline {
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 2: Secrets Detection (runs first!)
+        // STAGE 2: Secrets Detection
         // ═══════════════════════════════════════════
         stage('Secrets Detection') {
-            parallel{
-                stage('Gitleaks') {
-                    steps {
-                        sh '''
-                            echo "=== Running Gitleaks ==="
-                            mkdir -p reports
-                            docker run --rm -v $(pwd):/repo \
-                                zricethezav/gitleaks:latest \
-                                detect --source /repo \
-                                --config /repo/todos-service/security-config/gitleaks.toml \
-                                --report-path /repo/reports/gitleaks-report.json \
-                                --report-format json \
-                                --verbose
-                        '''
-                    }
-                    post {
-                        always {
-                            archiveArtifacts artifacts: 'reports/gitleaks-report.json', allowEmptyArchive: true
-                        }
-                    }
+            steps {
+                sh '''
+                    echo "=== Running Gitleaks ==="
+                    mkdir -p reports
+                    docker run --rm -v $(pwd):/repo \
+                        zricethezav/gitleaks:v8.18.0 \
+                        detect --source /repo \
+                        --config /repo/todos-service/security-config/gitleaks.toml \
+                        --report-path /repo/reports/gitleaks-report.json \
+                        --report-format json \
+                        --verbose
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/gitleaks-report.json', allowEmptyArchive: true
                 }
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 3: Build the Service
+        // STAGE 3: Build & Test
         // ═══════════════════════════════════════════
-        stage('Build') {
-            parallel {
-                stage('Build todos-service') {
-                    steps {
-                        dir('todos-service') {
-                            sh 'mvn clean compile -B'
-                        }
-                    }
-                }
-            }
-        }
-        // ═══════════════════════════════════════════
-        // STAGE 4: Unit Tests
-        // ═══════════════════════════════════════════
-        stage('Unit Tests') {
-            parallel {
-                stage('Test todos-service') {
-                    steps {
-                        dir('todos-service') {
-                            sh 'mvn test -B'
-                        }
-                    }
-                    post {
-                        always {
-                            junit allowEmptyResults: true, testResults: 'todos-service/target/surefire-reports/*.xml'
-                            jacoco(execPattern: 'todos-service/target/jacoco.exec')
-                        }
-                    }
-                }
-            }
-        }
-        // ═══════════════════════════════════════════
-        // STAGE 5: SAST - SonarQube Analysis
-        // ═══════════════════════════════════════════
-        stage('SAST') {
+        stage('Build & Test') {
             steps {
                 dir('todos-service') {
-                    withSonarQubeEnv('SonarQube') {
-                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                            sh '''
-                                mvn sonar:sonar \
-                                    -Dsonar.projectKey=todos-service \
-                                    -Dsonar.projectName=todos-service \
-                                    -Dsonar.host.url=http://localhost:8085 \
-                                    -Dsonar.login=${SONAR_TOKEN} \
-                                    -B
-                            '''
+                    sh 'mvn clean verify -B'
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'todos-service/target/surefire-reports/*.xml'
+                    jacoco(execPattern: 'todos-service/target/jacoco.exec')
+                }
+            }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 4: SAST & SCA (parallel)
+        // ═══════════════════════════════════════════
+        stage('SAST & SCA') {
+            parallel {
+                stage('SAST - SonarQube') {
+                    steps {
+                        dir('todos-service') {
+                            withSonarQubeEnv('SonarQube') {
+                                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                                    sh """
+                                        mvn sonar:sonar \
+                                            -Dsonar.projectKey=${IMAGE_NAME} \
+                                            -Dsonar.projectName=${IMAGE_NAME} \
+                                            -Dsonar.host.url=${SONARQUBE_URL} \
+                                            -Dsonar.login=${SONAR_TOKEN} \
+                                            -B
+                                    """
+                                }
+                            }
+                        }
+                    }
+                }
+                stage('SCA - OWASP Dependency-Check') {
+                    steps {
+                        dir('todos-service') {
+                            sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=/opt/dependency-check-data -B'
+                        }
+                    }
+                    post {
+                        always {
+                            dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
+                            archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
                         }
                     }
                 }
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 6: Quality Gate
+        // STAGE 5: Quality Gate
         // ═══════════════════════════════════════════
         stage('Quality Gate') {
             steps {
@@ -104,22 +119,18 @@ pipeline {
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 7: SCA (Software Composition Analysis)
+        // STAGE 6: Package JAR & Build Docker Image
         // ═══════════════════════════════════════════
-        
-        // ═══════════════════════════════════════════
-        // STAGE 8: Build JAR & Docker Image
-        // ═══════════════════════════════════════════
-        stage('Build JAR & Docker Image') {
+        stage('Package JAR & Build Docker Image') {
             steps {
                 dir('todos-service') {
                     sh 'mvn package -DskipTests -B'
-                    sh 'docker build -t todos-service:${BUILD_NUMBER} -t todos-service:latest .'
+                    sh "docker build --no-cache -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
                 }
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 9: Vulnerability Scan (JAR & Image)
+        // STAGE 7: Vulnerability Scan (JAR & Image)
         // ═══════════════════════════════════════════
         stage('Vulnerability Scan') {
             parallel {
@@ -134,24 +145,27 @@ pipeline {
                 }
                 stage('Scan Docker Image (Trivy)') {
                     steps {
-                        sh '''
+                        sh """
                             echo "=== Scanning Docker Image for vulnerabilities ==="
-                            echo "trivy image --severity HIGH,CRITICAL --format json --output reports/trivy-image-report.json todos-service:${BUILD_NUMBER}"
+                            echo "trivy image --severity HIGH,CRITICAL --format json --output reports/trivy-image-report.json ${IMAGE_NAME}:${IMAGE_TAG}"
                             echo "Docker image scan complete."
-                        '''
+                        """
                     }
                 }
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 10: Publish to Nexus
+        // STAGE 8: Publish JAR to Nexus
         // ═══════════════════════════════════════════
         stage('Publish JAR to Nexus') {
+            when { branch 'main' }
             steps {
                 dir('todos-service') {
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
-                        sh '''
-                            cat > /tmp/nexus-settings.xml <<EOF
+                        sh """
+                            SETTINGS=\$(mktemp)
+                            chmod 600 \$SETTINGS
+                            cat > \$SETTINGS <<XMLEOF
 <settings>
   <servers>
     <server>
@@ -161,32 +175,65 @@ pipeline {
     </server>
   </servers>
 </settings>
-EOF
+XMLEOF
                             mvn deploy \
                                 -DskipTests \
-                                -DaltDeploymentRepository=nexus-releases::default::http://localhost:8081/repository/maven-snapshots/ \
-                                -s /tmp/nexus-settings.xml -B
-                            rm -f /tmp/nexus-settings.xml
-                        '''
+                                -DaltDeploymentRepository=nexus-releases::default::${NEXUS_URL}/repository/${NEXUS_REPO}/ \
+                                -s \$SETTINGS -B
+                            rm -f \$SETTINGS
+                        """
                     }
                 }
             }
         }
         // ═══════════════════════════════════════════
-        // STAGE 11: Push Docker Image to Nexus
+        // STAGE 9: Push Docker Image to Nexus
         // ═══════════════════════════════════════════
         stage('Push Docker Image to Nexus') {
+            when { branch 'main' }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
-                    sh '''
-                        docker login -u ${NEXUS_USER} -p ${NEXUS_PASS} localhost:8083
-                        docker tag todos-service:${BUILD_NUMBER} localhost:8083/todos-service:${BUILD_NUMBER}
-                        docker tag todos-service:latest localhost:8083/todos-service:latest
-                        docker push localhost:8083/todos-service:${BUILD_NUMBER}
-                        docker push localhost:8083/todos-service:latest
-                    '''
+                    sh """
+                        echo \${NEXUS_PASS} | docker login -u \${NEXUS_USER} --password-stdin ${NEXUS_DOCKER_REG}
+                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}
+                        docker tag ${IMAGE_NAME}:latest ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest
+                        docker push ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest
+                    """
                 }
             }
+        }
+        // ═══════════════════════════════════════════
+        // STAGE 10: Deploy (Placeholder)
+        // ═══════════════════════════════════════════
+        stage('Deploy') {
+            when { branch 'main' }
+            steps {
+                sh """
+                    echo "=== Deploying ${IMAGE_NAME}:${IMAGE_TAG} ==="
+                    echo "docker pull ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "docker stop ${IMAGE_NAME} || true"
+                    echo "docker rm ${IMAGE_NAME} || true"
+                    echo "docker run -d --name ${IMAGE_NAME} -p 8080:8080 ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "Deployment complete."
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            sh """
+                docker rmi ${IMAGE_NAME}:${IMAGE_TAG} ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG} || true
+                docker rmi ${IMAGE_NAME}:latest ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest || true
+            """
+            cleanWs()
+        }
+        success {
+            slackSend(channel: '#builds', color: 'good', message: "SUCCESS: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
+        }
+        failure {
+            slackSend(channel: '#builds', color: 'danger', message: "FAILED: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
         }
     }
 }
