@@ -11,6 +11,7 @@ paths = [
     '''package-lock\.json''',
     '''\.gradle''',
     '''target/''',
+    '''Jenkinsfile''',
 ]
 
 [[rules]]

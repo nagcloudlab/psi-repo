@@ -59,7 +59,7 @@ pipeline {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                 sh '''
                     echo "=== Running Gitleaks ==="
-                    mkdir -p reports
+                    mkdir -p reports && chmod 777 reports
                     docker run --rm -v $(pwd):/repo \
                         zricethezav/gitleaks:v8.18.0 \
                         detect --source /repo \
