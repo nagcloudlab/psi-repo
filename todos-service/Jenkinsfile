@@ -20,10 +20,11 @@ pipeline {
                     steps {
                         sh '''
                             echo "=== Running Gitleaks ==="
+                            mkdir -p reports
                             docker run --rm -v $(pwd):/repo \
                                 zricethezav/gitleaks:latest \
                                 detect --source /repo \
-                                --config /repo/security-config/gitleaks.toml \
+                                --config /repo/todos-service/security-config/gitleaks.toml \
                                 --report-path /repo/reports/gitleaks-report.json \
                                 --report-format json \
                                 --verbose
