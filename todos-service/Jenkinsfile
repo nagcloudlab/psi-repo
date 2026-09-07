@@ -2,19 +2,39 @@ pipeline {
     agent any
 
     stages {
-        stage('Build') {
+        // ═══════════════════════════════════════════
+        // STAGE 1: Checkout & Pre-flight
+        // ═══════════════════════════════════════════
+        stage('Checkout') {
             steps {
-                echo 'Building...'
+                checkout scm
+                sh 'echo "Branch: ${GIT_BRANCH} | Commit: ${GIT_COMMIT}"'
             }
         }
-        stage('Test') {
-            steps {
-                echo 'Testing...'
-            }
-        }
-        stage('Deploy') {
-            steps {
-                echo 'Deploying...'
+        // ═══════════════════════════════════════════
+        // STAGE 2: Secrets Detection (runs first!)
+        // ═══════════════════════════════════════════
+        stage('Secrets Detection') {
+            parallel{
+                stage('Gitleaks') {
+                    steps {
+                        sh '''
+                            echo "=== Running Gitleaks ==="
+                            docker run --rm -v $(pwd):/repo \
+                                zricethezav/gitleaks:latest \
+                                detect --source /repo \
+                                --config /repo/security-config/gitleaks.toml \
+                                --report-path /repo/reports/gitleaks-report.json \
+                                --report-format json \
+                                --verbose
+                        '''
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'reports/gitleaks-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
             }
         }
     }
