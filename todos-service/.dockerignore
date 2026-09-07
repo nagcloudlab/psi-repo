@@ -1,0 +1,9 @@
+.git
+.gitignore
+.vscode
+.idea
+*.md
+target/
+reports/
+security-config/
+Jenkinsfile
