@@ -72,6 +72,164 @@ Under **Manage Jenkins → System**:
 
 ---
 
+## SonarQube Setup
+
+SonarQube performs static code analysis (SAST) — finds bugs, code smells, and security vulnerabilities.
+
+### 1. Run SonarQube Container
+
+```bash
+docker run -d --name sonarqube \
+    -p 8085:9000 \
+    -v sonarqube_data:/opt/sonarqube/data \
+    -v sonarqube_extensions:/opt/sonarqube/extensions \
+    -v sonarqube_logs:/opt/sonarqube/logs \
+    sonarqube:lts-community
+```
+
+- **Web UI**: `http://localhost:8085`
+- Container port `9000` is mapped to host port `8085`
+- Data persists in Docker volumes
+
+### 2. Initial Setup
+
+1. Open `http://localhost:8085` — wait 1-2 minutes for startup
+2. Login with default credentials: **admin / admin**
+3. Change the password when prompted
+
+### 3. Generate Authentication Token
+
+1. Go to **My Account** (top-right avatar) → **Security**
+2. Enter token name: `jenkins`
+3. Click **Generate** → copy the token (e.g., `sqp_xxxxxxxxxxxx`)
+4. Save this token — you'll need it for Jenkins
+
+### 4. Create Project
+
+1. Go to **Projects → Create Project → Manually**
+2. Project key: `todos-service`
+3. Project name: `todos-service`
+4. Click **Set Up**
+
+### 5. Configure Webhook (for Quality Gate)
+
+1. Go to **Administration → Configuration → Webhooks**
+2. Click **Create**
+3. Name: `Jenkins`
+4. URL: `http://<JENKINS_IP>:8080/sonarqube-webhook/`
+5. Click **Create**
+
+### 6. Configure Jenkins
+
+**Manage Jenkins → Credentials:**
+- Kind: **Secret text**
+- Secret: paste the token from step 3
+- ID: `sonar-token`
+
+**Manage Jenkins → System → SonarQube servers:**
+- Name: `SonarQube`
+- Server URL: `http://localhost:8085`
+- Server authentication token: select `sonar-token`
+
+---
+
+## Nexus Repository Setup
+
+Nexus stores build artifacts (JAR files) and Docker images in a private registry.
+
+### 1. Run Nexus Container
+
+```bash
+docker run -d --name nexus \
+    -p 8081:8081 \
+    -p 8083:8083 \
+    -v nexus_data:/nexus-data \
+    sonatype/nexus3
+```
+
+- **Web UI**: `http://localhost:8081`
+- **Docker Registry**: port `8083`
+- Data persists in Docker volume
+
+### 2. Get Initial Admin Password
+
+```bash
+# Wait ~2 minutes for Nexus to start, then:
+docker exec nexus cat /nexus-data/admin.password
+```
+
+### 3. Initial Setup
+
+1. Open `http://localhost:8081`
+2. Click **Sign In** → username: `admin`, password: from step 2
+3. Follow the setup wizard:
+   - Set new admin password (e.g., `admin123`)
+   - Enable anonymous access: **Yes** (for pulling artifacts)
+
+### 4. Create Maven Repository
+
+1. Go to **Settings (gear icon) → Repositories → Create Repository**
+2. Select **maven2 (hosted)**
+3. Name: `maven-snapshots`
+4. Version policy: **Snapshot**
+5. Deployment policy: **Allow redeploy**
+6. Click **Create Repository**
+
+### 5. Create Docker Repository
+
+1. Go to **Settings → Repositories → Create Repository**
+2. Select **docker (hosted)**
+3. Name: `psi-docker`
+4. Check **HTTP** connector, port: `8083`
+5. Enable **Docker V1 API** (optional)
+6. Click **Create Repository**
+
+### 6. Enable Docker Realm
+
+1. Go to **Settings → Security → Realms**
+2. Move **Docker Bearer Token Realm** to the **Active** column
+3. Click **Save**
+
+### 7. Configure Docker Insecure Registry
+
+On the **Jenkins/Nexus host**, add insecure registry:
+
+```bash
+sudo tee /etc/docker/daemon.json <<EOF
+{
+  "insecure-registries": ["localhost:8083", "<YOUR_SERVER_IP>:8083"]
+}
+EOF
+sudo systemctl restart docker
+```
+
+On **Mac (Docker Desktop)**: Settings → Docker Engine → add `"insecure-registries": ["<IP>:8083"]`
+
+### 8. Configure Jenkins
+
+**Manage Jenkins → Credentials:**
+- Kind: **Username with password**
+- Username: `admin`
+- Password: your Nexus admin password
+- ID: `nexus-credentials`
+
+### 9. Verify
+
+```bash
+# Test Maven repo
+curl -u admin:admin123 http://localhost:8081/repository/maven-snapshots/
+
+# Test Docker login
+echo "admin123" | docker login -u admin --password-stdin localhost:8083
+
+# Test Docker push
+docker pull hello-world
+docker tag hello-world localhost:8083/hello-world:test
+docker push localhost:8083/hello-world:test
+```
+
+---
+
 ## Mail Server Setup (MailHog)
 
 MailHog is a lightweight email testing tool — it catches all outgoing emails so you can view them in a web UI. No real emails are sent.
@@ -136,7 +294,7 @@ The pipeline supports these build parameters:
 
 ---
 
-## Pipeline Stages (16)
+## Pipeline Stages (18)
 
 ```
  ┌─────────────────────────────────────────────────────────────┐
@@ -156,8 +314,9 @@ The pipeline supports these build parameters:
  │ 12. Deploy to Staging                     ← parameter       │
  │ 13. Smoke Tests (/health)                 ← parameter       │
  │ 14. Manual Approval                       ← parameter       │
- │ 15. Deploy to Production                  ← parameter       │
- │ 16. Build Summary Dashboard                                 │
+ │ 15. Deploy to Production + Git Tag        ← parameter       │
+ │ 16. Rollback (placeholder)                ← parameter       │
+ │ 17. Build Summary Dashboard                                 │
  └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -167,9 +326,10 @@ The pipeline supports these build parameters:
 |-------|------|--------|
 | **SCA (OWASP DC)** | ~5-10 min | Downloads NVD database on first run |
 | **SAST (SonarQube)** | ~1-2 min | Full code analysis |
-| **Docker Build** | ~1-3 min | `--no-cache` forces full rebuild |
+| **Docker Build** | ~1-3 min | Multi-stage Dockerfile build |
 
 > **Tip for demos**: Use `SKIP_SECURITY_SCANS=true` for fast builds during class. Enable for full pipeline demos.
+> Security scan failures mark the build as **UNSTABLE** (not FAILED) so the pipeline continues.
 
 ---
 
