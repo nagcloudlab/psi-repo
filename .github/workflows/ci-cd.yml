@@ -22,10 +22,6 @@ env:
   STAGING_PORT: '9090'
   PRODUCTION_PORT: '8082'
 
-concurrency:
-  group: ${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
 
   build-and-test:
