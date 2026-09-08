@@ -1,29 +1,36 @@
 package com.example;
 
-import org.junit.jupiter.api.MethodOrderer;
-import org.junit.jupiter.api.Order;
+import java.util.List;
+import java.util.Optional;
+
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(TodoApiController.class)
-@Import(TodoService.class)
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class TodoApiControllerTest {
 
 	@Autowired
 	private MockMvc mockMvc;
 
+	@MockitoBean
+	private TodoService todoService;
+
 	@Test
-	@Order(1)
 	void getAllTodosReturnsListOfTodos() throws Exception {
+		when(todoService.getAllTodos()).thenReturn(List.of(
+				new Todo("1", "Sample Todo 1", false),
+				new Todo("2", "Sample Todo 2", true)));
+
 		mockMvc.perform(get("/api/v1/todos"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.length()").value(2))
@@ -33,8 +40,9 @@ class TodoApiControllerTest {
 	}
 
 	@Test
-	@Order(2)
 	void getTodoByIdReturnsOk() throws Exception {
+		when(todoService.getTodoById("1")).thenReturn(Optional.of(new Todo("1", "Sample Todo 1", false)));
+
 		mockMvc.perform(get("/api/v1/todos/1"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value("1"))
@@ -42,23 +50,26 @@ class TodoApiControllerTest {
 	}
 
 	@Test
-	@Order(3)
 	void getTodoByIdReturns404ForMissing() throws Exception {
+		when(todoService.getTodoById("999")).thenReturn(Optional.empty());
+
 		mockMvc.perform(get("/api/v1/todos/999"))
 				.andExpect(status().isNotFound());
 	}
 
 	@Test
-	@Order(4)
 	void getTodosReturnsJson() throws Exception {
+		when(todoService.getAllTodos()).thenReturn(List.of(new Todo("1", "Todo", false)));
+
 		mockMvc.perform(get("/api/v1/todos"))
 				.andExpect(status().isOk())
 				.andExpect(content().contentType("application/json"));
 	}
 
 	@Test
-	@Order(5)
 	void createTodoReturns201() throws Exception {
+		when(todoService.createTodo(any(Todo.class))).thenReturn(new Todo("abc-123", "New Todo", false));
+
 		mockMvc.perform(post("/api/v1/todos")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"title\": \"New Todo\", \"completed\": false}"))
@@ -68,8 +79,10 @@ class TodoApiControllerTest {
 	}
 
 	@Test
-	@Order(6)
 	void updateTodoReturnsOk() throws Exception {
+		when(todoService.updateTodo(eq("1"), any(Todo.class)))
+				.thenReturn(Optional.of(new Todo("1", "Updated Todo", true)));
+
 		mockMvc.perform(put("/api/v1/todos/1")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"title\": \"Updated Todo\", \"completed\": true}"))
@@ -79,8 +92,9 @@ class TodoApiControllerTest {
 	}
 
 	@Test
-	@Order(7)
 	void updateTodoReturns404ForMissing() throws Exception {
+		when(todoService.updateTodo(eq("999"), any(Todo.class))).thenReturn(Optional.empty());
+
 		mockMvc.perform(put("/api/v1/todos/999")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"title\": \"Updated\", \"completed\": false}"))
@@ -88,15 +102,17 @@ class TodoApiControllerTest {
 	}
 
 	@Test
-	@Order(8)
 	void deleteTodoReturns404ForMissing() throws Exception {
+		when(todoService.deleteTodo("999")).thenReturn(false);
+
 		mockMvc.perform(delete("/api/v1/todos/999"))
 				.andExpect(status().isNotFound());
 	}
 
 	@Test
-	@Order(9)
 	void deleteTodoReturns204() throws Exception {
+		when(todoService.deleteTodo("1")).thenReturn(true);
+
 		mockMvc.perform(delete("/api/v1/todos/1"))
 				.andExpect(status().isNoContent());
 	}

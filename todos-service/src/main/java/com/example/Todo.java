@@ -1,9 +1,20 @@
 package com.example;
 
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+
+@Entity
 public class Todo {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
     private String title;
     private boolean completed;
+
+    public Todo() {
+    }
 
     public Todo(String id, String title, boolean completed) {
         this.id = id;

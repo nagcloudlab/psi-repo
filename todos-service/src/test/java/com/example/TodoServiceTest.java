@@ -5,35 +5,45 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@DataJpaTest
 class TodoServiceTest {
+
+	@Autowired
+	private TodoRepository todoRepository;
 
 	private TodoService todoService;
 
 	@BeforeEach
 	void setUp() {
-		todoService = new TodoService();
+		todoRepository.deleteAll();
+		todoRepository.save(new Todo(null, "Sample Todo 1", false));
+		todoRepository.save(new Todo(null, "Sample Todo 2", true));
+		todoRepository.save(new Todo(null, "Sample Todo 3", false));
+		todoService = new TodoService(todoRepository);
 	}
 
 	@Test
 	void getAllTodosReturnsInitialTodos() {
 		List<Todo> todos = todoService.getAllTodos();
 		assertEquals(3, todos.size());
-		assertEquals("Sample Todo 1", todos.get(0).getTitle());
 	}
 
 	@Test
 	void getTodoByIdReturnsExistingTodo() {
-		Optional<Todo> todo = todoService.getTodoById("1");
+		Todo saved = todoRepository.findAll().get(0);
+		Optional<Todo> todo = todoService.getTodoById(saved.getId());
 		assertTrue(todo.isPresent());
-		assertEquals("Sample Todo 1", todo.get().getTitle());
+		assertEquals(saved.getTitle(), todo.get().getTitle());
 	}
 
 	@Test
 	void getTodoByIdReturnsEmptyForMissing() {
-		Optional<Todo> todo = todoService.getTodoById("999");
+		Optional<Todo> todo = todoService.getTodoById("nonexistent");
 		assertTrue(todo.isEmpty());
 	}
 
@@ -44,13 +54,14 @@ class TodoServiceTest {
 
 		assertNotNull(created.getId());
 		assertEquals("New Todo", created.getTitle());
-		assertEquals(3, todoService.getAllTodos().size());
+		assertEquals(4, todoService.getAllTodos().size());
 	}
 
 	@Test
 	void updateTodoModifiesExisting() {
+		Todo saved = todoRepository.findAll().get(0);
 		Todo updated = new Todo(null, "Updated Title", true);
-		Optional<Todo> result = todoService.updateTodo("1", updated);
+		Optional<Todo> result = todoService.updateTodo(saved.getId(), updated);
 
 		assertTrue(result.isPresent());
 		assertEquals("Updated Title", result.get().getTitle());
@@ -60,18 +71,19 @@ class TodoServiceTest {
 	@Test
 	void updateTodoReturnsEmptyForMissing() {
 		Todo updated = new Todo(null, "Updated", false);
-		Optional<Todo> result = todoService.updateTodo("999", updated);
+		Optional<Todo> result = todoService.updateTodo("nonexistent", updated);
 		assertTrue(result.isEmpty());
 	}
 
 	@Test
 	void deleteTodoRemovesExisting() {
-		assertTrue(todoService.deleteTodo("1"));
-		assertEquals(1, todoService.getAllTodos().size());
+		Todo saved = todoRepository.findAll().get(0);
+		assertTrue(todoService.deleteTodo(saved.getId()));
+		assertEquals(2, todoService.getAllTodos().size());
 	}
 
 	@Test
 	void deleteTodoReturnsFalseForMissing() {
-		assertFalse(todoService.deleteTodo("999"));
+		assertFalse(todoService.deleteTodo("nonexistent"));
 	}
 }

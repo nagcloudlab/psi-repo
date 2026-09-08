@@ -1,46 +1,45 @@
 package com.example;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 
 @Service
 public class TodoService {
 
-    private final List<Todo> todos = new ArrayList<>(List.of(
-        new Todo("1", "Sample Todo 1", false),
-        new Todo("2", "Sample Todo 2", true),
-        new Todo("3", "Sample Todo 3", false)
-    ));
+    private final TodoRepository todoRepository;
+
+    public TodoService(TodoRepository todoRepository) {
+        this.todoRepository = todoRepository;
+    }
 
     public List<Todo> getAllTodos() {
-        return List.copyOf(todos);
+        return todoRepository.findAll();
     }
 
     public Optional<Todo> getTodoById(String id) {
-        return todos.stream()
-                .filter(todo -> todo.getId().equals(id))
-                .findFirst();
+        return todoRepository.findById(id);
     }
 
     public Todo createTodo(Todo todo) {
-        todo.setId(UUID.randomUUID().toString());
-        todos.add(todo);
-        return todo;
+        todo.setId(null);
+        return todoRepository.save(todo);
     }
 
     public Optional<Todo> updateTodo(String id, Todo updated) {
-        return getTodoById(id).map(existing -> {
+        return todoRepository.findById(id).map(existing -> {
             existing.setTitle(updated.getTitle());
             existing.setCompleted(updated.isCompleted());
-            return existing;
+            return todoRepository.save(existing);
         });
     }
 
     public boolean deleteTodo(String id) {
-        return todos.removeIf(todo -> todo.getId().equals(id));
+        if (todoRepository.existsById(id)) {
+            todoRepository.deleteById(id);
+            return true;
+        }
+        return false;
     }
 }
