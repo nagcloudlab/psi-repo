@@ -20,7 +20,7 @@ class TodoServiceTest {
 	@Test
 	void getAllTodosReturnsInitialTodos() {
 		List<Todo> todos = todoService.getAllTodos();
-		assertEquals(2, todos.size());
+		assertEquals(3, todos.size());
 		assertEquals("Sample Todo 1", todos.get(0).getTitle());
 	}
 
