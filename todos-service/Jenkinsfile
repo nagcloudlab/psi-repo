@@ -46,7 +46,7 @@ pipeline {
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'todos-service/target/surefire-reports/*.xml'
-                    jacoco(execPattern: 'todos-service/target/jacoco.exec')
+                    // jacoco(execPattern: 'todos-service/target/jacoco.exec')
                 }
             }
         }
