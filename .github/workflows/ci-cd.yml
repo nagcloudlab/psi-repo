@@ -20,7 +20,7 @@ env:
   NEXUS_REPO: maven-snapshots
   NEXUS_DOCKER_REG: 34.172.179.125:8083
   STAGING_PORT: '9090'
-  PRODUCTION_PORT: '8080'
+  PRODUCTION_PORT: '8082'
 
 concurrency:
   group: ${{ github.ref }}
