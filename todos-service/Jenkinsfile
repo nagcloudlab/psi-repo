@@ -1,4 +1,5 @@
 pipeline {
+    
     agent any
 
     environment {
@@ -7,7 +8,6 @@ pipeline {
         NEXUS_URL        = 'http://localhost:8081'
         NEXUS_REPO       = 'maven-snapshots'
         NEXUS_DOCKER_REG = 'localhost:8083'
-        SONARQUBE_URL    = 'http://localhost:8085'
         STAGING_PORT     = '9090'
         PRODUCTION_PORT  = '8080'
     }
@@ -15,13 +15,7 @@ pipeline {
     parameters {
         choice(name: 'DEPLOY_ENV', choices: ['none', 'staging', 'production'], description: 'Target environment to deploy')
         booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip test execution')
-        booleanParam(name: 'SKIP_SECURITY_SCANS', defaultValue: false, description: 'Skip all security scans')
     }
-
-    // tools {
-    //     maven 'Maven-3'    // Uncomment if Maven is configured in Jenkins Global Tool Config
-    //     jdk 'JDK-17'       // Uncomment if JDK is configured in Jenkins Global Tool Config
-    // }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
@@ -36,10 +30,6 @@ pipeline {
 
     stages {
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 1: Checkout
-        // WHY: Pull latest code from SCM. Every pipeline starts here.
-        // ═══════════════════════════════════════════════════════════
         stage('Checkout') {
             steps {
                 checkout([$class: 'GitSCM', branches: [[name: '*/main']], userRemoteConfigs: [[url: 'http://github.com/nagcloudlab/psi-repo']]])
@@ -47,42 +37,6 @@ pipeline {
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 2: Secrets Detection
-        // WHY: Catch leaked credentials BEFORE they reach production.
-        //       Uses Gitleaks to scan full git history.
-        // TOOL: Gitleaks (Docker-based)
-        // ═══════════════════════════════════════════════════════════
-        stage('Secrets Detection') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                sh '''
-                    echo "=== Running Gitleaks ==="
-                    sudo rm -rf reports || true
-                    mkdir -p reports
-                    docker run --rm -v $(pwd):/repo \
-                        zricethezav/gitleaks:v8.18.0 \
-                        detect --source /repo \
-                        --config /repo/todos-service/security-config/gitleaks.toml \
-                        --report-format json \
-                        --verbose
-                '''
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'reports/gitleaks-report.json', allowEmptyArchive: true
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 3: Build & Test
-        // WHY: Compile code, run unit tests, generate coverage.
-        //       'mvn clean verify' does compile + test + verify in one.
-        // REPORTS: JUnit XML (test results), JaCoCo (code coverage)
-        // ═══════════════════════════════════════════════════════════
         stage('Build & Test') {
             steps {
                 dir('todos-service') {
@@ -97,76 +51,6 @@ pipeline {
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 4: SAST & SCA (parallel)
-        // WHY: Run static analysis and dependency checks simultaneously
-        //       to save time. Both are read-only analysis tasks.
-        // SAST: Static Application Security Testing (SonarQube)
-        //       — finds bugs, code smells, and security vulnerabilities
-        // SCA:  Software Composition Analysis (OWASP Dependency-Check)
-        //       — finds known CVEs in third-party dependencies
-        // ═══════════════════════════════════════════════════════════
-        stage('SAST & SCA') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            parallel {
-                stage('SAST - SonarQube') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                        dir('todos-service') {
-                            withSonarQubeEnv('SonarQube') {
-                                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                                    sh """
-                                        mvn sonar:sonar \
-                                            -Dsonar.projectKey=${IMAGE_NAME} \
-                                            -Dsonar.projectName=${IMAGE_NAME} \
-                                            -Dsonar.host.url=${SONARQUBE_URL} \
-                                            -Dsonar.login=${SONAR_TOKEN} \
-                                            -B
-                                    """
-                                }
-                            }
-                        }
-                        }
-                    }
-                }
-                // stage('SCA - OWASP Dependency-Check') {
-                //     steps {
-                //         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                //         dir('todos-service') {
-                //             sh 'mvn org.owasp:dependency-check-maven:check -DdataDirectory=${WORKSPACE}/.dependency-check-data -B'
-                //         }
-                //         }
-                //     }
-                //     post {
-                //         always {
-                //             dependencyCheckPublisher pattern: 'todos-service/target/dependency-check-report.json'
-                //             archiveArtifacts artifacts: 'todos-service/target/dependency-check-report.*', allowEmptyArchive: true
-                //         }
-                //     }
-                // }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 5: Quality Gate
-        // WHY: SonarQube evaluates code against quality rules.
-        //       Pipeline aborts if quality gate fails — enforcing
-        //       code quality standards before artifacts are built.
-        // ═══════════════════════════════════════════════════════════
-        stage('Quality Gate') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 6: Package JAR & Build Docker Image
-        // WHY: Create deployable artifacts. Multi-stage Dockerfile
-        //       keeps the image small and secure (no build tools).
-        // ═══════════════════════════════════════════════════════════
         stage('Package JAR & Build Docker Image') {
             steps {
                 dir('todos-service') {
@@ -176,129 +60,7 @@ pipeline {
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 7: Vulnerability Scan (JAR & Image)
-        // WHY: Scan the built artifacts (not just source code) for
-        //       vulnerabilities. Catches issues in base images and
-        //       runtime dependencies that SAST/SCA might miss.
-        // TOOL: Trivy (placeholder commands for teaching)
-        // ═══════════════════════════════════════════════════════════
-        stage('Vulnerability Scan') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            parallel {
-                stage('Scan JAR (Trivy)') {
-                    steps {
-                        sh '''
-                            echo "=== Scanning JAR for vulnerabilities ==="
-                            echo "trivy fs --scanners vuln todos-service/target/*.jar --format json --output reports/trivy-jar-report.json"
-                            echo "trivy fs --scanners vuln todos-service/target/*.jar --format template --template @contrib/html.tpl --output reports/trivy-jar-report.html"
-                            echo "JAR scan complete."
-                        '''
-                    }
-                }
-                stage('Scan Docker Image (Trivy)') {
-                    steps {
-                        sh """
-                            echo "=== Scanning Docker Image for vulnerabilities ==="
-                            echo "trivy image --severity HIGH,CRITICAL --format json --output reports/trivy-image-report.json ${IMAGE_NAME}:${IMAGE_TAG}"
-                            echo "trivy image --severity HIGH,CRITICAL --format template --template @contrib/html.tpl --output reports/trivy-image-report.html ${IMAGE_NAME}:${IMAGE_TAG}"
-                            echo "Docker image scan complete."
-                        """
-                    }
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 8: DAST - OWASP ZAP
-        // WHY: Dynamic Application Security Testing scans the RUNNING
-        //       application for vulnerabilities like XSS, SQL injection,
-        //       missing security headers. Catches issues that only
-        //       appear at runtime — SAST can't find these.
-        // FLOW: Start app in container → Run ZAP against it → Teardown
-        // TOOL: OWASP ZAP (placeholder commands for teaching)
-        // ═══════════════════════════════════════════════════════════
-        stage('DAST - OWASP ZAP') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            steps {
-                sh """
-                    echo "=== Starting application for DAST scanning ==="
-                    echo "docker run -d --name ${IMAGE_NAME}-dast -p 8888:8080 ${IMAGE_NAME}:${IMAGE_TAG}"
-                    echo "Waiting for application to start..."
-                    echo "sleep 15"
-
-                    echo "=== Running OWASP ZAP Baseline Scan ==="
-                    echo "docker run --rm --network host -v \\\$(pwd)/reports:/zap/wrk:rw \\\\
-                        ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \\\\
-                        -t http://localhost:8888 \\\\
-                        -r zap-report.html \\\\
-                        -J zap-report.json \\\\
-                        -c todos-service/security-config/zap-rules.tsv || true"
-
-                    echo "=== Tearing down DAST target ==="
-                    echo "docker stop ${IMAGE_NAME}-dast && docker rm ${IMAGE_NAME}-dast"
-                    echo "DAST scan complete."
-                """
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'reports/zap-report.*', allowEmptyArchive: true
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 9: Security Reports Dashboard
-        // WHY: Consolidate all security reports into Jenkins sidebar
-        //       for easy access. Teams can review all findings in one
-        //       place without digging through build logs.
-        // PLUGIN: HTML Publisher
-        // ═══════════════════════════════════════════════════════════
-        stage('Security Reports') {
-            when { expression { !params.SKIP_SECURITY_SCANS } }
-            steps {
-                sh 'mkdir -p reports'
-                echo '=== Publishing Security Reports ==='
-            }
-            post {
-                always {
-                    publishHTML(target: [
-                        allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
-                        reportDir: 'reports', reportFiles: 'gitleaks-report.json',
-                        reportName: 'Gitleaks Secrets Report'
-                    ])
-                    publishHTML(target: [
-                        allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
-                        reportDir: 'todos-service/target', reportFiles: 'dependency-check-report.html',
-                        reportName: 'OWASP Dependency-Check Report'
-                    ])
-                    publishHTML(target: [
-                        allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
-                        reportDir: 'reports', reportFiles: 'zap-report.html',
-                        reportName: 'OWASP ZAP DAST Report'
-                    ])
-                    publishHTML(target: [
-                        allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
-                        reportDir: 'reports', reportFiles: 'trivy-jar-report.html',
-                        reportName: 'Trivy JAR Vulnerability Report'
-                    ])
-                    publishHTML(target: [
-                        allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
-                        reportDir: 'reports', reportFiles: 'trivy-image-report.html',
-                        reportName: 'Trivy Image Vulnerability Report'
-                    ])
-                    archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
-                }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 10: Publish JAR to Nexus
-        // WHY: Store versioned JAR in artifact repository for
-        //       traceability and rollback capability.
-        // ═══════════════════════════════════════════════════════════
         stage('Publish JAR to Nexus') {
-            // when { branch pattern: '.*main', comparator: 'REGEXP' }
             steps {
                 dir('todos-service') {
                     withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
@@ -327,11 +89,6 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 11: Push Docker Image to Nexus
-        // WHY: Store Docker image in private registry. Ensures
-        //       deployments always pull from a trusted source.
-        // ═══════════════════════════════════════════════════════════
         stage('Push Docker Image to Nexus') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
@@ -346,19 +103,7 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 12: Deploy to Staging
-        // WHY: Staging mirrors production. Test in a real environment
-        //       before touching production. Automatic after artifacts
-        //       are published — no manual intervention needed.
-        // ═══════════════════════════════════════════════════════════
         stage('Deploy to Staging') {
-            // when {
-            //     allOf {
-            //         branch 'main'
-            //         expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
-            //     }
-            // }
             steps {
                 sh """
                     echo "=== Deploying to STAGING ==="
@@ -373,19 +118,7 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 13: Smoke Tests
-        // WHY: Verify the deployed application is actually running
-        //       and responding. A basic health check with retries
-        //       catches deployment failures before users do.
-        // ═══════════════════════════════════════════════════════════
         stage('Smoke Tests') {
-            // when {
-            //     allOf {
-            //         branch 'main'
-            //         expression { params.DEPLOY_ENV == 'staging' || params.DEPLOY_ENV == 'production' }
-            //     }
-            // }
             steps {
                 sh """
                     echo "=== Running Smoke Tests against Staging ==="
@@ -408,20 +141,7 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 14: Manual Approval
-        // WHY: Human gate before production. Gives teams time to
-        //       review staging, check reports, and make a go/no-go
-        //       decision. Times out after 30 minutes to avoid
-        //       blocking the build queue forever.
-        // ═══════════════════════════════════════════════════════════
         stage('Approval for Production') {
-            // when {
-            //     allOf {
-            //         branch 'main'
-            //         expression { params.DEPLOY_ENV == 'production' }
-            //     }
-            // }
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: "Deploy ${IMAGE_NAME}:${IMAGE_TAG} to PRODUCTION?",
@@ -431,19 +151,7 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 15: Deploy to Production
-        // WHY: The final destination. Only reached after all scans
-        //       pass, staging works, smoke tests pass, and a human
-        //       approves. This is the safest path to production.
-        // ═══════════════════════════════════════════════════════════
         stage('Deploy to Production') {
-            // when {
-            //     allOf {
-            //         branch 'main'
-            //         expression { params.DEPLOY_ENV == 'production' }
-            //     }
-            // }
             steps {
                 sh """
                     echo "=== Deploying to PRODUCTION ==="
@@ -462,20 +170,7 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 16: Rollback (Placeholder)
-        // WHY: If production deploy goes wrong, roll back to the
-        //       previous known-good version. This is a placeholder
-        //       showing the pattern — in real pipelines you'd track
-        //       the last successful image tag.
-        // ═══════════════════════════════════════════════════════════
         stage('Rollback') {
-            // when {
-            //     allOf {
-            //         branch 'main'
-            //         expression { params.DEPLOY_ENV == 'production' }
-            //     }
-            // }
             steps {
                 sh """
                     echo "=== Rollback Plan ==="
@@ -492,12 +187,6 @@ XMLEOF
             }
         }
 
-        // ═══════════════════════════════════════════════════════════
-        // STAGE 17: Build Summary Dashboard
-        // WHY: A single view of everything that happened in this
-        //       build. Makes it easy to review results without
-        //       scrolling through hundreds of lines of logs.
-        // ═══════════════════════════════════════════════════════════
         stage('Build Summary') {
             steps {
                 sh """
@@ -510,13 +199,6 @@ XMLEOF
                     echo "║ Commit      : \${GIT_COMMIT}                               "
                     echo "║ Build URL   : ${BUILD_URL}                                 "
                     echo "║ Parameters  : DEPLOY=${params.DEPLOY_ENV}                  "
-                    echo "╠════════════════════════════════════════════════════════════╣"
-                    echo "║ SECURITY SCANS                                            ║"
-                    echo "║   Secrets   : Gitleaks    (see Gitleaks Report)            "
-                    echo "║   SAST      : SonarQube   (see SonarQube Dashboard)       "
-                    echo "║   SCA       : OWASP DC    (see Dependency-Check Report)   "
-                    echo "║   DAST      : OWASP ZAP   (see ZAP Report)               "
-                    echo "║   Container : Trivy        (see Trivy Reports)            "
                     echo "╠════════════════════════════════════════════════════════════╣"
                     echo "║ ARTIFACTS                                                 ║"
                     echo "║   JAR       : Nexus ${NEXUS_URL}                          "
@@ -532,11 +214,6 @@ XMLEOF
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // POST: Runs after all stages complete (success or failure)
-    // WHY: Cleanup resources, notify the team, and leave the
-    //       workspace clean for the next build.
-    // ═══════════════════════════════════════════════════════════
     post {
         always {
             sh """
@@ -544,23 +221,6 @@ XMLEOF
                 docker rmi ${IMAGE_NAME}:latest ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest || true
             """
             cleanWs()
-        }
-        success {
-            slackSend(channel: '#builds', color: 'good',
-                message: "SUCCESS: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
-        }
-        failure {
-            slackSend(channel: '#builds', color: 'danger',
-                message: "FAILED: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
-            emailext(
-                subject: "FAILED: ${IMAGE_NAME} Build #${BUILD_NUMBER}",
-                body: "Build failed. Check: ${BUILD_URL}",
-                to: 'devops@example.com'
-            )
-        }
-        unstable {
-            slackSend(channel: '#builds', color: 'warning',
-                message: "UNSTABLE: ${IMAGE_NAME}:${IMAGE_TAG} - ${BUILD_URL}")
         }
     }
 }

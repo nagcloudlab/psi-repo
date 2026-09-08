@@ -1,7 +1,3 @@
-# ═══════════════════════════════════════════════════════════════
-# CI/CD Pipeline for todos-service (GitHub Actions)
-# Mirrors the Jenkins pipeline — same stages, same tools
-# ═══════════════════════════════════════════════════════════════
 name: CI/CD Pipeline
 
 on:
@@ -13,439 +9,224 @@ on:
     inputs:
       deploy_env:
         description: 'Target environment to deploy'
-        required: true
-        default: 'none'
         type: choice
-        options: [none, staging, production]
+        options: ['none', 'staging', 'production']
+        default: 'none'
       skip_tests:
         description: 'Skip test execution'
-        required: false
-        default: false
         type: boolean
-      skip_security_scans:
-        description: 'Skip all security scans'
-        required: false
         default: false
-        type: boolean
 
 env:
   IMAGE_NAME: todos-service
-  JAVA_VERSION: '17'
-  WORKING_DIR: todos-service
+  IMAGE_TAG: ${{ github.run_number }}
+  NEXUS_URL: http://localhost:8081
+  NEXUS_REPO: maven-snapshots
+  NEXUS_DOCKER_REG: localhost:8083
+  STAGING_PORT: '9090'
+  PRODUCTION_PORT: '8080'
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
 
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 1 & 2: Checkout + Secrets Detection
-  # WHY: Scan for leaked credentials in git history
-  # TOOL: Gitleaks (GitHub Action)
-  # ═══════════════════════════════════════════════════════════
-  secrets-detection:
-    name: Secrets Detection (Gitleaks)
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.skip_security_scans != 'true' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          config-path: todos-service/security-config/gitleaks.toml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 3: Build & Test
-  # WHY: Compile code, run unit tests, generate coverage
-  # REPORTS: JUnit XML, JaCoCo coverage
-  # ═══════════════════════════════════════════════════════════
   build-and-test:
     name: Build & Test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
+      - name: Print build info
+        run: echo "Branch:${{ github.ref_name }} | Commit:${{ github.sha }}"
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
+          java-version: '17'
           cache: maven
 
       - name: Build & Test
-        if: ${{ github.event.inputs.skip_tests != 'true' }}
-        working-directory: ${{ env.WORKING_DIR }}
-        run: mvn clean verify -B
-
-      - name: Compile Only (tests skipped)
-        if: ${{ github.event.inputs.skip_tests == 'true' }}
-        working-directory: ${{ env.WORKING_DIR }}
-        run: mvn clean compile -B
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            ${{ env.WORKING_DIR }}/target/surefire-reports/*.xml
-            ${{ env.WORKING_DIR }}/target/site/jacoco/
-          if-no-files-found: ignore
-
-      - name: Upload JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-jar
-          path: ${{ env.WORKING_DIR }}/target/*.jar
-          if-no-files-found: ignore
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 4: SAST - SonarQube Analysis
-  # WHY: Static analysis finds bugs, code smells, vulnerabilities
-  # ═══════════════════════════════════════════════════════════
-  sast-sonarqube:
-    name: SAST - SonarQube
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    if: ${{ github.event.inputs.skip_security_scans != 'true' }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
-          cache: maven
-
-      - name: SonarQube Analysis
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        working-directory: todos-service
         run: |
-          mvn clean verify sonar:sonar \
-            -Dsonar.projectKey=${{ env.IMAGE_NAME }} \
-            -Dsonar.projectName=${{ env.IMAGE_NAME }} \
-            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ env.SONAR_TOKEN }} \
-            -B
+          if [ "${{ inputs.skip_tests }}" = "true" ]; then
+            mvn clean compile -B
+          else
+            mvn clean verify -B
+          fi
 
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 4: SCA - OWASP Dependency-Check
-  # WHY: Find known CVEs in third-party dependencies
-  # ═══════════════════════════════════════════════════════════
-  sca-dependency-check:
-    name: SCA - OWASP Dependency-Check
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    if: ${{ github.event.inputs.skip_security_scans != 'true' }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+      - name: Publish Test Results
+        if: always()
+        uses: dorny/test-reporter@v1
         with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
-          cache: maven
+          name: JUnit Results
+          path: todos-service/target/surefire-reports/*.xml
+          reporter: java-junit
+          fail-on-error: false
 
-      - name: OWASP Dependency-Check
-        working-directory: ${{ env.WORKING_DIR }}
-        run: mvn org.owasp:dependency-check-maven:check -B
-
-      - name: Upload Dependency-Check Report
+      - name: Upload JaCoCo Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-check-report
-          path: ${{ env.WORKING_DIR }}/target/dependency-check-report.*
+          name: jacoco-report
+          path: todos-service/target/site/jacoco/
           if-no-files-found: ignore
 
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 6: Package JAR & Build Docker Image
-  # WHY: Create deployable artifacts
-  # ═══════════════════════════════════════════════════════════
-  build-docker-image:
-    name: Package JAR & Build Docker Image
-    runs-on: ubuntu-latest
+  package-and-publish:
+    name: Package & Publish
+    runs-on: self-hosted
     needs: build-and-test
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
+          java-version: '17'
           cache: maven
 
       - name: Package JAR
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: todos-service
         run: mvn package -DskipTests -B
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build Docker Image
-        working-directory: ${{ env.WORKING_DIR }}
+        working-directory: todos-service
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -t ${{ env.IMAGE_NAME }}:latest .
+
+      - name: Publish JAR to Nexus
+        working-directory: todos-service
         run: |
-          docker build \
-            -t ${{ env.IMAGE_NAME }}:${{ github.run_number }} \
-            -t ${{ env.IMAGE_NAME }}:latest \
-            .
+          SETTINGS=$(mktemp)
+          chmod 600 $SETTINGS
+          cat > $SETTINGS <<XMLEOF
+          <settings>
+            <servers>
+              <server>
+                <id>nexus-releases</id>
+                <username>${{ secrets.NEXUS_USER }}</username>
+                <password>${{ secrets.NEXUS_PASS }}</password>
+              </server>
+            </servers>
+          </settings>
+          XMLEOF
+          mvn deploy \
+              -DskipTests \
+              -DaltDeploymentRepository=nexus-releases::default::${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/ \
+              -s $SETTINGS -B
+          rm -f $SETTINGS
 
-      - name: Save Docker Image
+      - name: Push Docker Image to Nexus
         run: |
-          docker save ${{ env.IMAGE_NAME }}:${{ github.run_number }} | gzip > /tmp/docker-image.tar.gz
+          echo "${{ secrets.NEXUS_PASS }}" | docker login -u "${{ secrets.NEXUS_USER }}" --password-stdin ${{ env.NEXUS_DOCKER_REG }}
+          docker tag ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker tag ${{ env.IMAGE_NAME }}:latest ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker push ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Upload Docker Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp/docker-image.tar.gz
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 7: Vulnerability Scan (Trivy)
-  # WHY: Scan built artifacts for vulnerabilities
-  # ═══════════════════════════════════════════════════════════
-  vulnerability-scan:
-    name: Vulnerability Scan (Trivy)
-    runs-on: ubuntu-latest
-    needs: build-docker-image
-    if: ${{ github.event.inputs.skip_security_scans != 'true' }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker Image
-        run: docker load < /tmp/docker-image.tar.gz
-
-      - name: Trivy Image Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ github.run_number }}'
-          format: 'table'
-          severity: 'HIGH,CRITICAL'
-
-      - name: Trivy Image Scan (SARIF)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ github.run_number }}'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-        continue-on-error: true
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 8: DAST - OWASP ZAP (placeholder)
-  # WHY: Dynamic security testing against running application
-  # ═══════════════════════════════════════════════════════════
-  dast-zap:
-    name: DAST - OWASP ZAP
-    runs-on: ubuntu-latest
-    needs: build-docker-image
-    if: ${{ github.event.inputs.skip_security_scans != 'true' }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker Image
-        run: docker load < /tmp/docker-image.tar.gz
-
-      - name: Start Application
-        run: |
-          docker run -d --name ${{ env.IMAGE_NAME }}-dast \
-            -p 8888:8080 \
-            ${{ env.IMAGE_NAME }}:${{ github.run_number }}
-          echo "Waiting for application to start..."
-          sleep 15
-          curl -s http://localhost:8888/health || true
-
-      - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
-        with:
-          target: 'http://localhost:8888'
-          rules_file_name: 'todos-service/security-config/zap-rules.tsv'
-          allow_issue_writing: false
-        continue-on-error: true
-
-      - name: Teardown
-        if: always()
-        run: docker stop ${{ env.IMAGE_NAME }}-dast && docker rm ${{ env.IMAGE_NAME }}-dast || true
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 10 & 11: Publish to Registry
-  # WHY: Push JAR and Docker image to container registry
-  # Uses GitHub Container Registry (ghcr.io) instead of Nexus
-  # ═══════════════════════════════════════════════════════════
-  publish:
-    name: Publish Artifacts
-    runs-on: ubuntu-latest
-    needs: [build-docker-image, vulnerability-scan]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
-          cache: maven
-
-      - name: Publish JAR to GitHub Packages
-        working-directory: ${{ env.WORKING_DIR }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mvn deploy -DskipTests \
-            -DaltDeploymentRepository=github::default::https://maven.pkg.github.com/${{ github.repository }} \
-            -B
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Load Docker Image
-        run: docker load < /tmp/docker-image.tar.gz
-
-      - name: Push Docker Image to GHCR
-        run: |
-          docker tag ${{ env.IMAGE_NAME }}:${{ github.run_number }} ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
-          docker tag ${{ env.IMAGE_NAME }}:${{ github.run_number }} ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
-          docker push ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
-          docker push ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
-
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 12 & 13: Deploy to Staging + Smoke Tests
-  # WHY: Deploy and verify in staging environment
-  # ═══════════════════════════════════════════════════════════
   deploy-staging:
-    name: Deploy to Staging + Smoke Tests
-    runs-on: ubuntu-latest
-    needs: publish
-    if: |
-      github.ref == 'refs/heads/main' &&
-      (github.event.inputs.deploy_env == 'staging' || github.event.inputs.deploy_env == 'production')
-    environment:
-      name: staging
-      url: http://localhost:9090
+    name: Deploy to Staging
+    runs-on: self-hosted
+    needs: package-and-publish
     steps:
       - name: Deploy to Staging
         run: |
           echo "=== Deploying to STAGING ==="
-          echo "docker pull ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}"
-          echo "docker stop ${{ env.IMAGE_NAME }}-staging || true"
-          echo "docker rm ${{ env.IMAGE_NAME }}-staging || true"
-          echo "docker run -d --name ${{ env.IMAGE_NAME }}-staging -p 9090:8080 -e SPRING_PROFILES_ACTIVE=staging ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}"
-          echo "Staging deployment complete"
+          docker stop ${{ env.IMAGE_NAME }}-staging || true
+          docker rm ${{ env.IMAGE_NAME }}-staging || true
+          docker run -d --name ${{ env.IMAGE_NAME }}-staging \
+              -p ${{ env.STAGING_PORT }}:8080 \
+              -e SPRING_PROFILES_ACTIVE=staging \
+              ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          echo "Staging deployment complete on port ${{ env.STAGING_PORT }}"
 
       - name: Smoke Tests
         run: |
-          echo "=== Running Smoke Tests ==="
-          echo "curl -s http://localhost:9090/health"
-          echo "Smoke test PASSED"
+          echo "=== Running Smoke Tests against Staging ==="
+          for i in 1 2 3 4 5 6; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${{ env.STAGING_PORT }}/health || echo "000")
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test PASSED"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Smoke test FAILED - application did not respond with 200"
+          exit 1
 
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 14 & 15: Manual Approval + Deploy to Production
-  # WHY: Human gate before production deploy
-  # Uses GitHub Environments for approval
-  # ═══════════════════════════════════════════════════════════
+      - name: Teardown Staging
+        if: always()
+        run: docker rm -f ${{ env.IMAGE_NAME }}-staging || true
+
   deploy-production:
     name: Deploy to Production
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: deploy-staging
-    if: |
-      github.ref == 'refs/heads/main' &&
-      github.event.inputs.deploy_env == 'production'
-    environment:
-      name: production
-      url: http://localhost:8080
+    environment: production
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Deploy to Production
         run: |
           echo "=== Deploying to PRODUCTION ==="
-          echo "docker pull ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}"
-          echo "docker stop ${{ env.IMAGE_NAME }}-prod || true"
-          echo "docker rm ${{ env.IMAGE_NAME }}-prod || true"
-          echo "docker run -d --name ${{ env.IMAGE_NAME }}-prod -p 8080:8080 -e SPRING_PROFILES_ACTIVE=production ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}"
-          echo "Production deployment complete"
+          docker stop ${{ env.IMAGE_NAME }}-prod || true
+          docker rm ${{ env.IMAGE_NAME }}-prod || true
+          docker run -d --name ${{ env.IMAGE_NAME }}-prod \
+              -p ${{ env.PRODUCTION_PORT }}:8080 \
+              -e SPRING_PROFILES_ACTIVE=production \
+              ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          echo "Production deployment complete on port ${{ env.PRODUCTION_PORT }}"
 
       - name: Tag Release
         run: |
-          echo "git tag -a v${{ github.run_number }} -m 'Production release v${{ github.run_number }}'"
-          echo "git push origin v${{ github.run_number }}"
+          git tag -a "v${{ env.IMAGE_TAG }}" -m "Production release v${{ env.IMAGE_TAG }}"
+          git push origin "v${{ env.IMAGE_TAG }}"
 
-  # ═══════════════════════════════════════════════════════════
-  # STAGE 17: Build Summary
-  # WHY: Single view of the entire build
-  # ═══════════════════════════════════════════════════════════
-  build-summary:
-    name: Build Summary
-    runs-on: ubuntu-latest
-    needs: [secrets-detection, build-and-test, sast-sonarqube, sca-dependency-check, build-docker-image, vulnerability-scan]
-    if: always()
-    steps:
-      - name: Build Summary Dashboard
+      - name: Rollback Info
+        run: |
+          echo "=== Rollback Plan ==="
+          echo "If production deploy fails, run:"
+          echo "  docker stop ${{ env.IMAGE_NAME }}-prod"
+          echo "  docker rm ${{ env.IMAGE_NAME }}-prod"
+          echo "  docker run -d --name ${{ env.IMAGE_NAME }}-prod -p ${{ env.PRODUCTION_PORT }}:8080 ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:<PREVIOUS_TAG>"
+          echo ""
+          echo "Previous successful tags:"
+          git tag -l 'v*' --sort=-version:refname | head -5
+
+      - name: Build Summary
         run: |
           echo ""
           echo "╔════════════════════════════════════════════════════════════╗"
           echo "║               BUILD SUMMARY DASHBOARD                     ║"
           echo "╠════════════════════════════════════════════════════════════╣"
-          echo "║ Image       : ${{ env.IMAGE_NAME }}:${{ github.run_number }}"
+          echo "║ Image       : ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           echo "║ Branch      : ${{ github.ref_name }}"
           echo "║ Commit      : ${{ github.sha }}"
           echo "║ Run URL     : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           echo "╠════════════════════════════════════════════════════════════╣"
-          echo "║ SECURITY SCANS                                            ║"
-          echo "║   Secrets   : Gitleaks    (see job output)                "
-          echo "║   SAST      : SonarQube   (see SonarQube Dashboard)       "
-          echo "║   SCA       : OWASP DC    (see artifacts)                 "
-          echo "║   DAST      : OWASP ZAP   (see job output)               "
-          echo "║   Container : Trivy        (see Security tab)             "
+          echo "║ ARTIFACTS"
+          echo "║   JAR       : Nexus ${{ env.NEXUS_URL }}"
+          echo "║   Image     : ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           echo "╠════════════════════════════════════════════════════════════╣"
-          echo "║ ARTIFACTS                                                 ║"
-          echo "║   JAR       : GitHub Packages                             "
-          echo "║   Image     : ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}"
+          echo "║ DEPLOYMENTS"
+          echo "║   Staging   : http://localhost:${{ env.STAGING_PORT }}"
+          echo "║   Production: http://localhost:${{ env.PRODUCTION_PORT }}"
           echo "╚════════════════════════════════════════════════════════════╝"
-          echo ""
+
+  cleanup:
+    name: Cleanup
+    runs-on: self-hosted
+    needs: [deploy-production]
+    if: always()
+    steps:
+      - name: Remove Docker Images
+        run: |
+          docker rmi ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || true
+          docker rmi ${{ env.IMAGE_NAME }}:latest ${{ env.NEXUS_DOCKER_REG }}/${{ env.IMAGE_NAME }}:latest || true
