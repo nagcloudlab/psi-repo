@@ -2,14 +2,16 @@ pipeline {
     
     agent any
 
+    
     environment {
         IMAGE_NAME       = 'todos-service'
         IMAGE_TAG        = "${BUILD_NUMBER}"
         NEXUS_URL        = 'http://localhost:8081'
         NEXUS_REPO       = 'maven-snapshots'
-        NEXUS_DOCKER_REG = 'localhost:8083'
         STAGING_PORT     = '9090'
         PRODUCTION_PORT  = '8181'
+        DOCKER_HUB       = 'docker.io'
+        DOCKER_REPO      = 'nagabhushanamn/todos-service'
     }
 
     parameters {
@@ -91,13 +93,13 @@ XMLEOF
 
         stage('Push Docker Image to Nexus') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'nexus-credentials', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo \${NEXUS_PASS} | docker login -u \${NEXUS_USER} --password-stdin ${NEXUS_DOCKER_REG}
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}
-                        docker tag ${IMAGE_NAME}:latest ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest
-                        docker push ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:${IMAGE_TAG}
-                        docker push ${NEXUS_DOCKER_REG}/${IMAGE_NAME}:latest
+                        echo \${DOCKER_PASS} | docker login -u \${DOCKER_USER} --password-stdin ${DOCKER_HUB}
+                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_HUB}/${DOCKER_REPO}:${IMAGE_TAG}
+                        docker tag ${IMAGE_NAME}:latest ${DOCKER_HUB}/${DOCKER_REPO}:latest
+                        docker push ${DOCKER_HUB}/${DOCKER_REPO}:${IMAGE_TAG}
+                        docker push ${DOCKER_HUB}/${DOCKER_REPO}:latest
                     """
                 }
             }
