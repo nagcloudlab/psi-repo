@@ -30,7 +30,7 @@ jobs:
 
   build-and-test:
     name: Build & Test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -74,7 +74,7 @@ jobs:
 
   package-and-publish:
     name: Package & Publish
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: build-and-test
     steps:
       - name: Checkout
@@ -127,7 +127,7 @@ jobs:
 
   deploy-staging:
     name: Deploy to Staging
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: package-and-publish
     steps:
       - name: Deploy to Staging
@@ -162,7 +162,7 @@ jobs:
 
   deploy-production:
     name: Deploy to Production
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: deploy-staging
     environment: production
     steps:
@@ -218,7 +218,7 @@ jobs:
 
   cleanup:
     name: Cleanup
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: [deploy-production]
     if: always()
     steps:
