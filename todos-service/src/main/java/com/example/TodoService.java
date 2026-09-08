@@ -12,7 +12,8 @@ public class TodoService {
 
     private final List<Todo> todos = new ArrayList<>(List.of(
         new Todo("1", "Sample Todo 1", false),
-        new Todo("2", "Sample Todo 2", true)
+        new Todo("2", "Sample Todo 2", true),
+        new Todo("3", "Sample Todo 3", false)
     ));
 
     public List<Todo> getAllTodos() {
