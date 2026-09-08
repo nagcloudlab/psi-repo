@@ -163,10 +163,10 @@ XMLEOF
                         ${IMAGE_NAME}:${IMAGE_TAG}
                     echo "Production deployment complete on port ${PRODUCTION_PORT}"
                 """
-                sh """
-                    git tag -a "v${IMAGE_TAG}" -m "Production release v${IMAGE_TAG}"
-                    git push origin "v${IMAGE_TAG}"
-                """
+                // sh """
+                //     git tag -a "v${IMAGE_TAG}" -m "Production release v${IMAGE_TAG}"
+                //     git push origin "v${IMAGE_TAG}"
+                // """
             }
         }
 
