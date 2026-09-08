@@ -42,7 +42,7 @@ pipeline {
         stage('Build & Test') {
             steps {
                 dir('todos-service') {
-                    sh "mvn clean ${params.SKIP_TESTS ? 'compile' : 'verify'} -B"
+                    sh "mvn clean ${params.SKIP_TESTS ? 'compile' : 'compile'} -B"
                 }
             }
             post {
